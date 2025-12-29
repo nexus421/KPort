@@ -1,14 +1,14 @@
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
-import io.ktor.util.collections.ConcurrentMap
+import io.ktor.util.collections.*
 import io.ktor.utils.io.*
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.convert
 import kotlinx.coroutines.*
 import okio.FileSystem
-import kotlin.time.Duration.Companion.seconds
 import platform.posix.time
-import kotlinx.cinterop.convert
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.seconds
 
 
 /**
@@ -17,15 +17,14 @@ import kotlin.system.exitProcess
  */
 fun main() = runBlocking {
     println("Starting KPort...")
-    
-    try {
-            if (FileSystem.SYSTEM.exists(workingDir).not()) {
-                FileSystem.SYSTEM.createDirectories(workingDir)
-                println("Created config directory: $workingDir")
-                FileSystem.SYSTEM.write(configDir) { writeUtf8(json.encodeToString(Config())) }
-                println("Created default config file: $configDir")
-            }
 
+    try {
+        if (FileSystem.SYSTEM.exists(workingDir).not()) {
+            FileSystem.SYSTEM.createDirectories(workingDir)
+            println("Created config directory: $workingDir")
+            FileSystem.SYSTEM.write(configDir) { writeUtf8(json.encodeToString(Config())) }
+            println("Created default config file: $configDir")
+        }
     } catch (e: Exception) {
         println("Warning: Could not create config directory $workingDir: ${e.message}")
     }
@@ -41,6 +40,7 @@ fun main() = runBlocking {
     // Launch a redirector coroutine for each rule
     rules.forEach { rule ->
         launch {
+            println("Loading rule: ${rule.type} ${rule.portFrom} -> ${rule.ipTo}:${rule.portTo}")
             try {
                 when (rule.type) {
                     ConnectionType.TCP -> runTcpRedirector(selector, rule)
@@ -60,18 +60,24 @@ fun main() = runBlocking {
 suspend fun runTcpRedirector(selector: SelectorManager, rule: Rule) = withContext(Dispatchers.IO) {
     try {
         val serverSocket = aSocket(selector).tcp().bind("0.0.0.0", rule.portFrom)
-        if(config.debug) println("TCP Listening: Port ${rule.portFrom} -> ${rule.ipTo}:${rule.portTo}")
+        if (config.debug) println("TCP Listening: Port ${rule.portFrom} -> ${rule.ipTo}:${rule.portTo}")
 
         while (isActive) {
             val clientSocket = serverSocket.accept()
             launch {
-                if(config.debug) println("Accepted TCP connection from ${clientSocket.remoteAddress}")
+                if (config.debug) println("Accepted TCP connection from ${clientSocket.remoteAddress}")
                 handleConnection(selector, clientSocket, rule)
             }
         }
     } catch (e: Exception) {
         if (e !is kotlinx.coroutines.CancellationException) {
-            println("Error in TCP Redirector on port ${rule.portFrom}: ${e.message}")
+            val errorMessage =
+                if (rule.portFrom < 1024 && (e.message?.contains("Permission denied") == true || e.message?.contains("error 13") == true)) {
+                    "Error: Permission denied binding to port ${rule.portFrom}. Ports below 1024 require root privileges or CAP_NET_BIND_SERVICE."
+                } else {
+                    "Error in TCP Redirector on port ${rule.portFrom}: ${e.message}"
+                }
+            println(errorMessage)
         }
     }
 }
@@ -79,41 +85,42 @@ suspend fun runTcpRedirector(selector: SelectorManager, rule: Rule) = withContex
 /**
  * Handles a single TCP connection by piping data between the client and the target.
  */
-suspend fun handleConnection(selector: SelectorManager, clientSocket: Socket, rule: Rule) = withContext(Dispatchers.IO) {
-    clientSocket.use { client ->
-        try {
-            val targetSocket = aSocket(selector).tcp().connect(rule.ipTo, rule.portTo)
-            targetSocket.use { target ->
-                val clientRead = client.openReadChannel()
-                val clientWrite = client.openWriteChannel()
-                val targetRead = target.openReadChannel()
-                val targetWrite = target.openWriteChannel()
+suspend fun handleConnection(selector: SelectorManager, clientSocket: Socket, rule: Rule) =
+    withContext(Dispatchers.IO) {
+        clientSocket.use { client ->
+            try {
+                val targetSocket = aSocket(selector).tcp().connect(rule.ipTo, rule.portTo)
+                targetSocket.use { target ->
+                    val clientRead = client.openReadChannel()
+                    val clientWrite = client.openWriteChannel()
+                    val targetRead = target.openReadChannel()
+                    val targetWrite = target.openWriteChannel()
 
-                // Pipe client data to target
-                val clientToTarget = launch {
-                    try {
-                        clientRead.copyAndClose(targetWrite)
-                    } catch (e: Exception) {
-                        if (config.debug) println("TCP clientToTarget Error: ${e.message}")
+                    // Pipe client data to target
+                    val clientToTarget = launch {
+                        try {
+                            clientRead.copyAndClose(targetWrite)
+                        } catch (e: Exception) {
+                            if (config.debug) println("TCP clientToTarget Error: ${e.message}")
+                        }
                     }
-                }
 
-                // Pipe target data to client
-                val targetToClient = launch {
-                    try {
-                        targetRead.copyAndClose(clientWrite)
-                    } catch (e: Exception) {
-                        if (config.debug) println("TCP targetToClient Error: ${e.message}")
+                    // Pipe target data to client
+                    val targetToClient = launch {
+                        try {
+                            targetRead.copyAndClose(clientWrite)
+                        } catch (e: Exception) {
+                            if (config.debug) println("TCP targetToClient Error: ${e.message}")
+                        }
                     }
-                }
 
-                joinAll(clientToTarget, targetToClient)
+                    joinAll(clientToTarget, targetToClient)
+                }
+            } catch (e: Exception) {
+                if (config.debug) println("Error connecting to target ${rule.ipTo}:${rule.portTo}: ${e.message}")
             }
-        } catch (e: Exception) {
-            if (config.debug) println("Error connecting to target ${rule.ipTo}:${rule.portTo}: ${e.message}")
         }
     }
-}
 
 /**
  * Returns current time in seconds since epoch.
@@ -156,7 +163,7 @@ suspend fun runUdpRedirector(selector: SelectorManager, rule: Rule) = withContex
             val session = sessions.getOrPut(clientAddress) {
                 if (config.debug) println("UDP: New session for $clientAddress")
                 val targetSocket = aSocket(selector).udp().connect(targetAddress)
-                
+
                 val job = launch {
                     try {
                         while (isActive) {
@@ -180,13 +187,19 @@ suspend fun runUdpRedirector(selector: SelectorManager, rule: Rule) = withContex
         }
     } catch (e: Exception) {
         if (e !is kotlinx.coroutines.CancellationException) {
-            println("Error UDP Redirector (${rule.portFrom}): ${e.message}")
+            val errorMessage =
+                if (rule.portFrom < 1024 && (e.message?.contains("Permission denied") == true || e.message?.contains("error 13") == true)) {
+                    "Error: Permission denied binding to UDP port ${rule.portFrom}. Ports below 1024 require root privileges or CAP_NET_BIND_SERVICE."
+                } else {
+                    "Error UDP Redirector (${rule.portFrom}): ${e.message}"
+                }
+            println(errorMessage)
         }
     } finally {
         serverSocket.close()
-        sessions.values.forEach { 
+        sessions.values.forEach {
             it.job.cancel()
-            it.socket.close() 
+            it.socket.close()
         }
         sessions.clear()
     }

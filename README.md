@@ -60,6 +60,20 @@ Simply run the generated binary:
 ./build/bin/native/releaseExecutable/KPort.kexe
 ```
 
+### Privileged Ports (Ports < 1024)
+
+On Linux, binding to ports below 1024 (e.g., 80, 443, 422) requires root privileges. You can either:
+
+1. **Run with sudo**:
+   ```bash
+   sudo ./build/bin/native/releaseExecutable/KPort.kexe
+   ```
+2. **Grant capabilities** (recommended for security):
+   ```bash
+   sudo setcap 'cap_net_bind_service=+ep' ./build/bin/native/releaseExecutable/KPort.kexe
+   ./build/bin/native/releaseExecutable/KPort.kexe
+   ```
+
 ## Testing
 
 ### TCP Testing

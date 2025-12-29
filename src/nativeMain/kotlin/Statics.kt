@@ -10,6 +10,7 @@ import platform.posix.getenv
  */
 val json = Json {
     encodeDefaults = true
+    prettyPrint = true
 }
 
 /**
