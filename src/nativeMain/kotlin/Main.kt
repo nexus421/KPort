@@ -5,7 +5,6 @@ import io.ktor.utils.io.*
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.convert
 import kotlinx.coroutines.*
-import okio.FileSystem
 import platform.posix.time
 import kotlin.system.exitProcess
 import kotlin.time.Duration.Companion.seconds
@@ -15,14 +14,25 @@ import kotlin.time.Duration.Companion.seconds
  * Main entry point of KPort.
  * Initializes the configuration and starts the redirectors for each rule.
  */
-fun main() = runBlocking {
-    println("Starting KPort...")
+fun main(vararg args: String) = runBlocking {
 
+    if (args.contains("--createService")) {
+        createService()
+        exitProcess(0)
+    } else if (args.contains("--removeService")) {
+        removeService()
+        exitProcess(0)
+    } else if (args.isNotEmpty()) {
+        println("Usage: kport [--createService] [--removeService]")
+        exitProcess(1)
+    }
+
+    println("Starting KPort...")
     try {
-        if (FileSystem.SYSTEM.exists(workingDir).not()) {
-            FileSystem.SYSTEM.createDirectories(workingDir)
+        if (workingDir.exists().not()) {
+            workingDir.mkdirs()
             println("Created config directory: $workingDir")
-            FileSystem.SYSTEM.write(configDir) { writeUtf8(json.encodeToString(Config())) }
+            configDir.writeText(json.encodeToString(config))
             println("Created default config file: $configDir")
         }
     } catch (e: Exception) {

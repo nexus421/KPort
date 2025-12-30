@@ -1,8 +1,6 @@
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import kotlinx.serialization.json.Json
-import okio.FileSystem
-import okio.Path.Companion.toPath
 import platform.posix.getenv
 
 /**
@@ -18,24 +16,23 @@ val json = Json {
  * Falls back to current directory if HOME is not set.
  */
 @OptIn(ExperimentalForeignApi::class)
-val workingDir = (getenv("HOME")?.toKString() ?: ".").let { "$it/.config/kport" }.toPath()
+val workingDir = OkioFile((getenv("HOME")?.toKString() ?: ".").let { "$it/.config/kport" })
 
 /**
  * Full path to the config.json file.
  */
-val configDir = workingDir.resolve("config.json")
+val configDir = OkioFile(workingDir, "config.json")
 
 /**
  * Global configuration object, loaded lazily from configDir.
  */
 val config: Config by lazy {
     try {
-        FileSystem.SYSTEM.read(configDir) { readUtf8() }.let {
-            json.decodeFromString<Config>(it) }.also {
+        json.decodeFromString<Config>(configDir.readText()).also {
             println("Configuration loaded from $configDir")
         }
     } catch (e: Exception) {
         println("Warning: No configuration found or could not be read (${e.message}). Using defaults.")
-        Config()
+        Config(rules = listOf(Rule(1025, 81, "10.123.123.12")))
     }
 }
