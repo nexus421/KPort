@@ -61,6 +61,8 @@ fun main(vararg args: String) = runBlocking {
             }
         }
     }
+    delay(1000)
+    println("KPort started successfully. Waiting for connections...")
 }
 
 /**
