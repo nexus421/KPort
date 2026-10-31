@@ -1,6 +1,10 @@
 # KPort
 
-A professional, lightweight TCP and UDP port forwarder built with **Kotlin/Native**, specifically optimized for **Linux
+> [!NOTE]
+> **Maintenance mode:** This project is no longer under active development.
+> Bug reports and pull requests are still welcome and will be reviewed.
+
+A lightweight TCP and UDP port forwarder built with **Kotlin/Native**, specifically optimized for **Linux
 ** environments.
 
 This project is a private utility designed for efficient port forwarding, successfully utilized for SSH tunneling and
